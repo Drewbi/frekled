@@ -23,13 +23,11 @@ fn main() -> ! {
     esp_println::logger::init_logger_from_env();
 
     let io = Io::new(peripherals.GPIO, peripherals.IO_MUX);
-    let mut lak = Output::new(io.pins.gpio1, Level::Low);
-    // let mut clk = Output::new(io.pins.gpio12, Level::Low);
-    // let mut da = Output::new(io.pins.gpio11, Level::Low);
-    let mut en = Output::new(io.pins.gpio4, Level::Low);
+    let mut lak = Output::new(io.pins.gpio4, Level::Low);
+    let mut en = Output::new(io.pins.gpio1, Level::Low);
 
-    let clk = io.pins.gpio2;
-    let da = io.pins.gpio3;
+    let clk = io.pins.gpio3;
+    let da = io.pins.gpio2;
 
     let mut spi = Spi::new(
         peripherals.SPI2,
