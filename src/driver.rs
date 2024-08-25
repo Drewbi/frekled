@@ -10,7 +10,7 @@ use esp_hal::{
 pub type Frame = [f64; 256];
 
 type Packet = [u8; 32];
-const MAX_PACKETS: usize = 10;
+const MAX_PACKETS: usize = 100;
 
 pub struct Device<'a> {
     spi: Spi<'a, SPI2, FullDuplexMode>,
@@ -55,11 +55,13 @@ fn generate_packets(frame: Frame) -> [Packet; MAX_PACKETS] {
     for i in 0..MAX_PACKETS {
         let activation_ratio = i as f64 / MAX_PACKETS as f64;
         for j in 0..256 {
-            if frame[j] >= activation_ratio {
+            if frame[j] > activation_ratio {
                 packets[i][j / 8] += 2_u8.pow(j as u32 % 8);
+                // log::info!("{:b}", packets[i][j / 8]);
             }
         }
-    } 
+    }
+    // log::info!("{:?}", packets);
     packets
 }
 

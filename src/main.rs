@@ -14,18 +14,15 @@ fn main() -> ! {
     
     let mut frame: Frame = [0.0; 256];
 
-    for i in 0..256 {
-        if i < 128 {
-            frame[i] = 0.5;
-        } else {
-            frame[i] = 1.0;
-        }
-    }
+    log::info!("{:?}", frame);
 
     let mut device = driver::Device::init();
 
     loop {
-        device.display(frame)
+        for i in 0..frame.len() {
+            frame[i] = (frame[i] + 0.001) % 1.0;
+        }
+        device.display(frame);
     }
 
 }
