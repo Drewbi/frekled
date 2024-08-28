@@ -10,7 +10,8 @@ use esp_hal::{
 pub type Frame = [f64; 256];
 
 type Packet = [u8; 32];
-const MAX_PACKETS: usize = 100;
+const NUM_BITS: usize = 8;
+const MAX_PACKETS: usize = 256;
 
 pub struct Device<'a> {
     spi: Spi<'a, SPI2, FullDuplexMode>,
@@ -44,28 +45,32 @@ impl<'a> Device<'a> {
         }
     }
 
-    pub fn display(&mut self, frame: Frame) {
-        let packets = generate_packets(frame);
-        transmit(packets, &mut self.spi);
+    pub fn display(&mut self, frame: &Frame) {
+        let mut packets: [Packet; MAX_PACKETS] = [[0; 32]; MAX_PACKETS];
+        encode_packets(&frame, &mut packets);
+        transmit(&packets, &mut self.spi);
     }
 }
 
-fn generate_packets(frame: Frame) -> [Packet; MAX_PACKETS] {
-    let mut packets: [Packet; MAX_PACKETS] = [[0b00000000; 32]; MAX_PACKETS];
-    for i in 0..MAX_PACKETS {
-        let activation_ratio = i as f64 / MAX_PACKETS as f64;
-        for j in 0..256 {
-            if frame[j] > activation_ratio {
-                packets[i][j / 8] += 2_u8.pow(j as u32 % 8);
-                // log::info!("{:b}", packets[i][j / 8]);
-            }
+fn encode_packets(frame: &Frame, packets: &mut [Packet; MAX_PACKETS]) {
+    // For each pixel
+    for i in 0..frame.len() {
+        // Get its BCM number
+        let encoded = (frame[i] * (MAX_PACKETS - 1) as f64) as u8;
+        // Set each bit for this pixel in the packets
+        for j in 0..MAX_PACKETS {
+            // Find the index of the most significant bit and create a mask
+            // log::info!("{}", j);
+            let mask = 1 << (NUM_BITS - 1) - ((if j < 255 { j + 1 } else {j}) as u8).leading_zeros() as usize;
+            // log::info!("{:b}", mask);
+            // log::info!("----");
+            // Use the mask to apply only the relevant bit to the packets
+            packets[j][i/NUM_BITS] |= encoded & mask;
         }
     }
-    // log::info!("{:?}", packets);
-    packets
 }
 
-fn transmit(packets: [Packet; MAX_PACKETS], spi: &mut Spi<SPI2, FullDuplexMode>) {
+fn transmit(packets: &[Packet; MAX_PACKETS], spi: &mut Spi<SPI2, FullDuplexMode>) {
     for i in 0..packets.len() {
         let _ = Spi::write_bytes(spi, &packets[i]);
     }
