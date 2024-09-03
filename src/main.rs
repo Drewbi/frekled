@@ -12,16 +12,14 @@ fn main() -> ! {
     esp_println::logger::init_logger_from_env();
     log::info!("Starting");
     
-    let mut frame: Frame = [0.1; 256];
+    let val: f64 = 0.4;
 
     let mut device = driver::Device::init();
+    
+    let frame: Frame = [val; 256];
+    // device.display(&frame);
 
     loop {
-        // for i in 0..256 {
-        //     frame[i] = 0.0;
-        //     frame[(i + 1) & 255] = 1.0;
-        //     device.display(&frame);
-        // }
-        device.display(&frame);
+
     }
 }
