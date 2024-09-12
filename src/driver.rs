@@ -1,4 +1,4 @@
-use core::{cell::RefCell, cmp::max};
+use core::cell::RefCell;
 use critical_section::Mutex;
 use esp_hal::{
     clock::ClockControl,
@@ -11,10 +11,10 @@ use esp_hal::{
     timer::timg::{Timer, Timer0, TimerGroup},
 };
 
-type PixelBitDepth = u16;
+type PixelBitDepth = u8;
 
 const TX_RATE: u32 = 40; // MHz
-const INTERRUPT_DELAY: u64 = 1; // Microseconds
+const INTERRUPT_DELAY: u64 = 10; // Microseconds
 
 pub const NUM_PIXELS: usize = 256;
 const NUM_SLICES: usize = PixelBitDepth::BITS as usize;
@@ -156,10 +156,9 @@ fn display_interrupt() {
 
         let position_exponent = (2 as u64).pow(*display_position);
         let delay_time = INTERRUPT_DELAY * position_exponent;
-        let delay_time_safe = max(delay_time, 100);
 
         timer0.clear_interrupt();
-        timer0.load_value(delay_time_safe.micros()).unwrap();
+        timer0.load_value(delay_time.micros()).unwrap();
         timer0.start();
 
         *display_position = (1 + *display_position) & PixelBitDepth::BITS - 1 as u32;
