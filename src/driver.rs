@@ -1,4 +1,4 @@
-use core::cell::RefCell;
+use core::{cell::RefCell, cmp::max};
 use critical_section::Mutex;
 use esp_hal::{
     clock::ClockControl,
@@ -11,27 +11,26 @@ use esp_hal::{
     timer::timg::{Timer, Timer0, TimerGroup},
 };
 
+type PixelBitDepth = u16;
+
 const TX_RATE: u32 = 40; // MHz
-const INTERRUPT_DELAY: u64 = 1000; // Microseconds
+const INTERRUPT_DELAY: u64 = 1; // Microseconds
 
 pub const NUM_PIXELS: usize = 256;
-const NUM_SLICES: usize = u128::BITS as usize;
-
+const NUM_SLICES: usize = PixelBitDepth::BITS as usize;
 const CHUNK_SIZE: usize = u8::BITS as usize;
-// const NUM_CHUNKS: usize = NUM_PIXELS / CHUNK_SIZE;
+const NUM_CHUNKS: usize = NUM_PIXELS / CHUNK_SIZE;
 
 pub type Frame = [f64; NUM_PIXELS];
-type Packet = [u8; NUM_PIXELS / 8];
+type Packet = [u8; NUM_CHUNKS];
 
-static TIMER0: Mutex<RefCell<Option<Timer<Timer0<TIMG0>, esp_hal::Blocking>>>> =
-    Mutex::new(RefCell::new(None));
+static TIMER0: Mutex<RefCell<Option<Timer<Timer0<TIMG0>, esp_hal::Blocking>>>> = Mutex::new(RefCell::new(None));
 static DEVICE: Mutex<RefCell<Option<Device>>> = Mutex::new(RefCell::new(None));
 
-static DISPLAY_BUFFER: Mutex<RefCell<Option<[Packet; NUM_SLICES]>>> =
-    Mutex::new(RefCell::new(None));
+static DISPLAY_BUFFER: Mutex<RefCell<Option<[Packet; NUM_SLICES]>>> = Mutex::new(RefCell::new(None));
 static UPDATE_BUFFER: Mutex<RefCell<Option<[Packet; NUM_SLICES]>>> = Mutex::new(RefCell::new(None));
 static SWAP_BUFFERS: Mutex<RefCell<bool>> = Mutex::new(RefCell::new(false));
-static DISPLAY_POSITION: Mutex<RefCell<usize>> = Mutex::new(RefCell::new(0));
+static DISPLAY_POSITION: Mutex<RefCell<u32>> = Mutex::new(RefCell::new(0));
 
 pub struct Device<'a> {
     spi: Spi<'a, SPI2, FullDuplexMode>,
@@ -52,12 +51,7 @@ pub fn init() {
     let clk = io.pins.gpio3;
     let da = io.pins.gpio2;
 
-    let spi = Spi::new(peripherals.SPI2, TX_RATE.MHz(), SpiMode::Mode0, &clocks).with_pins(
-        Some(clk),
-        Some(da),
-        gpio::NO_PIN,
-        gpio::NO_PIN,
-    );
+    let spi = Spi::new(peripherals.SPI2, TX_RATE.MHz(), SpiMode::Mode0, &clocks).with_pins(Some(clk), Some(da), gpio::NO_PIN, gpio::NO_PIN);
 
     let timg0 = TimerGroup::new(peripherals.TIMG0, &clocks);
     let timer0 = timg0.timer0;
@@ -101,14 +95,14 @@ fn encode_packets(frame: &Frame, packets: &mut [Packet; NUM_SLICES]) {
     for pixel_index in 0..frame.len() {
         let chunk_num = pixel_index / CHUNK_SIZE;
 
-        // Get its binary encoded value
-        let encoded = generate_bit_sequence(frame[pixel_index]) as u128;
+        // Get its binary code modulation value
+        let encoded = (frame[pixel_index] * PixelBitDepth::MAX as f64) as PixelBitDepth;
 
         // Set each bit for this pixel in the packets
         for slice_num in 0..NUM_SLICES {
             // Get the corresponding encoded bit for the slice
-            let mask = 1 << (NUM_SLICES - 1) - slice_num;
-            let target_bit = encoded & mask;
+            let mask: PixelBitDepth = 1 << slice_num;
+            let target_bit: PixelBitDepth = encoded & mask;
             let is_on = target_bit > 0;
             let pixel_mask = if is_on {
                 1 << (pixel_index & (CHUNK_SIZE - 1))
@@ -124,44 +118,10 @@ fn encode_packets(frame: &Frame, packets: &mut [Packet; NUM_SLICES]) {
     // log::info!("Finish encoding - {}", end_time - start_time);
 }
 
-fn generate_bit_sequence(val: f64) -> u128 {
-    let num_ones = round(NUM_SLICES as f64 * val);
-    let mut sequence: u128 = 0;
-
-    // Early shortcuts
-    if num_ones == 0 {
-        return 0;
-    } else if num_ones == NUM_SLICES {
-        return 1 << (NUM_SLICES - 1);
-    }
-
-    // Calculate how often to place the 1s
-    let interval = NUM_SLICES as f64 / num_ones as f64;
-    let mut position = 0.0;
-
-    // Distribute 1s in the sequence
-    for _ in 0..num_ones {
-        sequence |= 1 << round(position);
-        position += interval;
-    }
-
-    sequence
-}
-
-fn round(val: f64) -> usize {
-    (val + 0.5) as usize
-}
-
-fn transmit(packets: &[Packet; NUM_SLICES], device: &mut Device) {
-    // let start_time = time::current_time();
-    // log::info!("{:?}", packets);
-    for i in 0..packets.len() {
-        device.latch.set_low();
-        let _ = Spi::write_bytes(&mut device.spi, &packets[i]);
-        device.latch.set_high();
-    }
-
-    // let end_time = time::current_time();
+fn transmit(packet: Packet, device: &mut Device) {
+    device.latch.set_low();
+    let _ = Spi::write_bytes(&mut device.spi, &packet);
+    device.latch.set_high();
 }
 
 #[handler]
@@ -171,29 +131,38 @@ fn display_interrupt() {
         let mut display_buffer_binding = DISPLAY_BUFFER.borrow_ref_mut(cs);
 
         let mut swap_buffers = SWAP_BUFFERS.borrow_ref_mut(cs);
+        let mut display_position = DISPLAY_POSITION.borrow_ref_mut(cs);
 
         if *swap_buffers {
+            *swap_buffers = false;
+            *display_position = 0;
+
             let mut update_buffer = UPDATE_BUFFER.borrow_ref_mut(cs);
             let update_buffer = update_buffer.as_mut().unwrap();
 
             let temp_buffer = display_buffer_binding.replace(*update_buffer);
             *update_buffer = temp_buffer.unwrap();
-
-            *swap_buffers = false;
         }
 
         let mut device = DEVICE.borrow_ref_mut(cs);
         let device = device.as_mut().unwrap();
 
         let display_buffer = display_buffer_binding.as_mut().unwrap();
-        transmit(display_buffer, device);
+        let display_slice = display_buffer[*display_position as usize];
+        transmit(display_slice, device);
 
         let mut timer0 = TIMER0.borrow_ref_mut(cs);
         let timer0 = timer0.as_mut().unwrap();
 
+        let position_exponent = (2 as u64).pow(*display_position);
+        let delay_time = INTERRUPT_DELAY * position_exponent;
+        let delay_time_safe = max(delay_time, 100);
+
         timer0.clear_interrupt();
-        timer0.load_value(INTERRUPT_DELAY.micros()).unwrap();
+        timer0.load_value(delay_time_safe.micros()).unwrap();
         timer0.start();
+
+        *display_position = (1 + *display_position) & PixelBitDepth::BITS - 1 as u32;
     });
     // let end_time = time::current_time();
     // log::info!("Finish interrupt - {}", end_time - start_time);
