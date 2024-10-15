@@ -10,25 +10,16 @@ use esp_hal::{
     system::SystemControl,
     timer::timg::{Timer, Timer0, TimerGroup},
 };
-
-type PixelBitDepth = u8;
+use frekled_util::{self, Frame, Timeslice, PixelBitDepth, NUM_PIXELS, NUM_SLICES};
 
 const TX_RATE: u32 = 40; // MHz
-const INTERRUPT_DELAY: u64 = 10; // Microseconds
-
-pub const NUM_PIXELS: usize = 256;
-const NUM_SLICES: usize = PixelBitDepth::BITS as usize;
-const CHUNK_SIZE: usize = u8::BITS as usize;
-const NUM_CHUNKS: usize = NUM_PIXELS / CHUNK_SIZE;
-
-pub type Frame = [f64; NUM_PIXELS];
-type Packet = [u8; NUM_CHUNKS];
+const INTERRUPT_DELAY: u64 = 8; // Microseconds
 
 static TIMER0: Mutex<RefCell<Option<Timer<Timer0<TIMG0>, esp_hal::Blocking>>>> = Mutex::new(RefCell::new(None));
 static DEVICE: Mutex<RefCell<Option<Device>>> = Mutex::new(RefCell::new(None));
 
-static DISPLAY_BUFFER: Mutex<RefCell<Option<[Packet; NUM_SLICES]>>> = Mutex::new(RefCell::new(None));
-static UPDATE_BUFFER: Mutex<RefCell<Option<[Packet; NUM_SLICES]>>> = Mutex::new(RefCell::new(None));
+static DISPLAY_BUFFER: Mutex<RefCell<Option<[Timeslice; NUM_SLICES]>>> = Mutex::new(RefCell::new(None));
+static UPDATE_BUFFER: Mutex<RefCell<Option<[Timeslice; NUM_SLICES]>>> = Mutex::new(RefCell::new(None));
 static SWAP_BUFFERS: Mutex<RefCell<bool>> = Mutex::new(RefCell::new(false));
 static DISPLAY_POSITION: Mutex<RefCell<u32>> = Mutex::new(RefCell::new(0));
 
@@ -79,9 +70,9 @@ pub fn init() {
 }
 
 pub fn update(frame: &Frame) {
-    let mut packets: [Packet; NUM_SLICES] = [[0; NUM_PIXELS / 8]; NUM_SLICES];
+    let mut packets: [Timeslice; NUM_SLICES] = [[0; NUM_PIXELS / 8]; NUM_SLICES];
 
-    encode_packets(&frame, &mut packets);
+    frekled_util::encode_packets(&frame, &mut packets);
 
     critical_section::with(|cs| {
         UPDATE_BUFFER.borrow_ref_mut(cs).replace(packets);
@@ -90,35 +81,7 @@ pub fn update(frame: &Frame) {
     })
 }
 
-fn encode_packets(frame: &Frame, packets: &mut [Packet; NUM_SLICES]) {
-    // let start_time = time::current_time();
-    for pixel_index in 0..frame.len() {
-        let chunk_num = pixel_index / CHUNK_SIZE;
-
-        // Get its binary code modulation value
-        let encoded = (frame[pixel_index] * PixelBitDepth::MAX as f64) as PixelBitDepth;
-
-        // Set each bit for this pixel in the packets
-        for slice_num in 0..NUM_SLICES {
-            // Get the corresponding encoded bit for the slice
-            let mask: PixelBitDepth = 1 << slice_num;
-            let target_bit: PixelBitDepth = encoded & mask;
-            let is_on = target_bit > 0;
-            let pixel_mask = if is_on {
-                1 << (pixel_index & (CHUNK_SIZE - 1))
-            } else {
-                0
-            };
-
-            // Use the mask to apply only the relevant bit to the packets
-            packets[slice_num][chunk_num] |= pixel_mask;
-        }
-    }
-    // let end_time = time::current_time();
-    // log::info!("Finish encoding - {}", end_time - start_time);
-}
-
-fn transmit(packet: Packet, device: &mut Device) {
+fn transmit(packet: Timeslice, device: &mut Device) {
     device.latch.set_low();
     let _ = Spi::write_bytes(&mut device.spi, &packet);
     device.latch.set_high();
@@ -156,12 +119,15 @@ fn display_interrupt() {
 
         let position_exponent = (2 as u64).pow(*display_position);
         let delay_time = INTERRUPT_DELAY * position_exponent;
+        // log::info!("--------");
+        // log::info!("{}", *display_position);
+        // log::info!("{}", delay_time);
+        *display_position = (1 + *display_position) & PixelBitDepth::BITS - 1 as u32;
 
         timer0.clear_interrupt();
         timer0.load_value(delay_time.micros()).unwrap();
         timer0.start();
 
-        *display_position = (1 + *display_position) & PixelBitDepth::BITS - 1 as u32;
     });
     // let end_time = time::current_time();
     // log::info!("Finish interrupt - {}", end_time - start_time);

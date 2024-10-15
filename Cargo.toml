@@ -1,22 +1,10 @@
-[package]
-name = "frekled"
-version = "0.1.0"
-authors = ["Drew Alexander <drewalexander986@gmail.com>"]
-edition = "2021"
-license = "MIT OR Apache-2.0"
+[workspace]
+resolver = "2"
+members = [
+    "frekled_device",
+    "frekled_util"
+]
 
-[dependencies]
-esp-hal = { version = "0.20.1", features = [ "esp32s3", "debug", "log" ] }
-esp-println = { version = "0.11.0", features = ["esp32s3", "log"] }
-critical-section = "1.1.3"
-esp-backtrace = { version = "0.14.1", features = [
-    "esp32s3",
-    "exception-handler",
-    "panic-handler",
-    "println",
-] }
-fugit = "0.3.7"
-log = { version = "0.4.21" }
 [profile.dev]
 # Rust debug is too slow.
 # For debug builds always builds with some optimization
