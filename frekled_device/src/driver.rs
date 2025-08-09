@@ -20,7 +20,7 @@ static DEVICE: Mutex<RefCell<Option<Device>>> = Mutex::new(RefCell::new(None));
 
 static DISPLAY_BUFFER: Mutex<RefCell<Option<[Timeslice; NUM_SLICES]>>> = Mutex::new(RefCell::new(None));
 static UPDATE_BUFFER: Mutex<RefCell<Option<[Timeslice; NUM_SLICES]>>> = Mutex::new(RefCell::new(None));
-static SWAP_BUFFERS: Mutex<RefCell<bool>> = Mutex::new(RefCell::new(false));
+static SWAP_FLAG: Mutex<RefCell<bool>> = Mutex::new(RefCell::new(false));
 static DISPLAY_POSITION: Mutex<RefCell<u32>> = Mutex::new(RefCell::new(0));
 
 pub struct Device<'a> {
@@ -76,8 +76,8 @@ pub fn update(frame: &Frame) {
 
     critical_section::with(|cs| {
         UPDATE_BUFFER.borrow_ref_mut(cs).replace(packets);
-        let mut swap_buffers = SWAP_BUFFERS.borrow_ref_mut(cs);
-        *swap_buffers = true;
+        let mut swap_flag = SWAP_FLAG.borrow_ref_mut(cs);
+        *swap_flag = true;
     })
 }
 
@@ -89,15 +89,14 @@ fn transmit(packet: Timeslice, device: &mut Device) {
 
 #[handler]
 fn display_interrupt() {
-    // let start_time = time::current_time();
     critical_section::with(|cs| {
         let mut display_buffer_binding = DISPLAY_BUFFER.borrow_ref_mut(cs);
 
-        let mut swap_buffers = SWAP_BUFFERS.borrow_ref_mut(cs);
+        let mut swap_flag = SWAP_FLAG.borrow_ref_mut(cs);
         let mut display_position = DISPLAY_POSITION.borrow_ref_mut(cs);
 
-        if *swap_buffers {
-            *swap_buffers = false;
+        if *swap_flag {
+            *swap_flag = false;
             *display_position = 0;
 
             let mut update_buffer = UPDATE_BUFFER.borrow_ref_mut(cs);
@@ -119,9 +118,7 @@ fn display_interrupt() {
 
         let position_exponent = (2 as u64).pow(*display_position);
         let delay_time = INTERRUPT_DELAY * position_exponent;
-        // log::info!("--------");
-        // log::info!("{}", *display_position);
-        // log::info!("{}", delay_time);
+        
         *display_position = (1 + *display_position) & PixelBitDepth::BITS - 1 as u32;
 
         timer0.clear_interrupt();
@@ -129,6 +126,4 @@ fn display_interrupt() {
         timer0.start();
 
     });
-    // let end_time = time::current_time();
-    // log::info!("Finish interrupt - {}", end_time - start_time);
 }
